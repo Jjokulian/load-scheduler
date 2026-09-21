@@ -183,5 +183,36 @@ group("fetchRange may throw or return a plain value without wedging anything");
   ok(s.stats().inFlightBytes === 0, "and nothing is stranded in flight");
 }
 
+group("a fill batch waits for company once, not once per wave");
+{
+  // Five runs a megabyte apart, so none can be bridged, well under the knee,
+  // at concurrency 2: three waves. Only the first may wait.
+  const h = harness({ manual: true, concurrency: 2, maxWait: 40 });
+  const want = [0, 1, 2, 3, 4].map((i) => [i * 1e6, i * 1e6 + 4096]);
+  const p = h.s.request(R(...want), { priority: "fill" });
+  ok(h.calls.length === 0 && h.timers.length === 1, "the batch waits for company first");
+  h.fireTimers();
+  ok(h.calls.length === 2, "the deadline sends the first wave, as many as fit");
+  h.settleAll(); await tick();
+  ok(h.timers.filter(Boolean).length === 0, "no second deadline is armed for what was already queued");
+  ok(h.calls.length === 4, `the second wave follows as room frees (saw ${h.calls.length} transfers)`);
+  h.settleAll(); await tick();
+  ok(h.calls.length === 5, "and the third");
+  h.settleAll(); await p;
+  // The window re-opens for a NEW batch once the old one has drained.
+  h.s.request(R([9e6, 9e6 + 4096]), { priority: "fill" });
+  ok(h.calls.length === 5 && h.timers.filter(Boolean).length === 1, "a later fill request waits for company again");
+}
+{
+  // A knee-sized batch goes at once; its remainder must not then wait.
+  const h = harness({ manual: true, concurrency: 1, maxWait: 40 });
+  const knee = h.s.estimator.knee();
+  const p = h.s.request(R([0, knee], [5e6, 5e6 + 4096]), { priority: "fill" });
+  ok(h.calls.length === 1, "past the knee the batch goes without waiting");
+  h.settleAll(); await tick();
+  ok(h.calls.length === 2 && h.timers.filter(Boolean).length === 0, "and the small remainder follows without a deadline");
+  h.settleAll(); await p;
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
