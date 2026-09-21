@@ -69,5 +69,31 @@ group("bad input is ignored, not fatal");
   ok(e.samples() === 0, "zero, negative and impossible samples are dropped");
 }
 
+group("a stall does not poison the fit");
+{
+  const e = createEstimator();
+  for (const b of [1000, 5000, 10000, 20000, 50000, 100000, 3000, 30000]) e.observe(b, elapsed(b));
+  // One transfer held 1.5 s by a stall, against a predicted 29 ms.
+  ok(e.observe(4096, 1500) === "stall", "a sample 50x its prediction is set aside");
+  ok(e.measured, "the fit survives it");
+  near(e.overheadMs, OVERHEAD, 0.5, "the overhead is untouched");
+  near(e.bytesPerMs, RATE, 20, "and so is the throughput");
+  for (const b of [2000, 40000]) e.observe(b, elapsed(b));
+  near(e.overheadMs, OVERHEAD, 0.5, "and ordinary samples after it still fit");
+  ok(typeof e.rejected === "function" && e.rejected() === 1, "one sample set aside, and counted");
+}
+
+group("a link that really slowed down is followed, not rejected for ever");
+{
+  const e = createEstimator();
+  for (const b of [1000, 5000, 10000, 20000, 50000, 100000]) e.observe(b, elapsed(b));
+  // Now 300 ms and 100 B/ms: every sample is far past 4x the old prediction.
+  const slow = (b) => 300 + b / 100;
+  for (const b of [1000, 5000, 10000, 20000, 50000, 100000, 2000, 40000]) e.observe(b, slow(b));
+  ok(e.measured, "it fits again");
+  near(e.overheadMs, 300, 1, "the new overhead");
+  near(e.bytesPerMs, 100, 2, "the new throughput");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

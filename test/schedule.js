@@ -214,5 +214,49 @@ group("a fill batch waits for company once, not once per wave");
   h.settleAll(); await p;
 }
 
+group("only a transfer that had the link to itself is a sample");
+{
+  // A fake clock and a link whose elapsed is 25 ms + 1 B/us.
+  let t = 0;
+  const pend = [];
+  const s = createScheduler({ concurrency: 4, now: () => t,
+    fetchRange: (lo, hi) => new Promise((res) => pend.push({ res, bytes: hi - lo })) });
+  const settle = async (ms) => { t += ms; pend.shift().res(); await tick(); };
+  // Four at once on one pipe: each finishes behind the others' bytes.
+  const four = s.request(R([0, 1000], [1e7, 1e7 + 8000], [2e7, 2e7 + 16000], [3e7, 3e7 + 64000]), { priority: "immediate" });
+  ok(pend.length === 4, "four transfers share the link");
+  for (const b of [1000, 8000, 16000, 64000]) await settle(25 + b / 1000);
+  await four;
+  ok(s.estimator.samples() === 0 && s.stats().samplesShared === 4, `none of the four is a sample (${s.estimator.samples()} fitted)`);
+  // One at a time: every one is.
+  for (const [i, b] of [1000, 4000, 16000, 64000, 2000, 32000].entries()) {
+    const p = s.request(R([5e7 + i * 1e7, 5e7 + i * 1e7 + b]), { priority: "immediate" });
+    await settle(25 + b / 1000); await p;
+  }
+  ok(s.estimator.samples() === 6 && s.stats().samplesFitted === 6, "six lone transfers are six samples");
+  ok(s.estimator.measured && Math.abs(s.estimator.overheadMs - 25) < 0.5, `and they fit the link (${s.estimator.overheadMs.toFixed(2)} ms)`);
+}
+
+group("a stall held on the link does not poison the scheduler's fit");
+{
+  let t = 0;
+  const pend = [];
+  const s = createScheduler({ concurrency: 1, now: () => t,
+    fetchRange: (lo, hi) => new Promise((res) => pend.push({ res })) });
+  const one = async (i, b, ms) => {
+    const p = s.request(R([i * 1e7, i * 1e7 + b]), { priority: "immediate" });
+    t += ms; pend.shift().res(); await tick(); await p;
+  };
+  const sizes = [1000, 4000, 16000, 64000, 2000, 32000, 8000, 128000];
+  for (const [i, b] of sizes.entries()) await one(i, b, 25 + b / 1000);
+  await one(20, 4096, 2000);                     // held 2 s by a stall
+  for (const [i, b] of sizes.entries()) await one(30 + i, b, 25 + b / 1000);
+  const e = s.estimator;
+  ok(e.measured, "still measured after the stall");
+  ok(Math.abs(e.overheadMs - 25) < 0.5 && Math.abs(e.bytesPerMs - 1000) < 20,
+     `overhead ${e.overheadMs.toFixed(2)} ms, ${e.bytesPerMs.toFixed(0)} B/ms: the stall is not in it`);
+  ok(s.stats().samplesStalled === 1, "and the stalled sample is counted, not hidden");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
