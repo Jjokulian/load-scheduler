@@ -145,5 +145,43 @@ group("stats report what actually happened");
   ok(st.active === 0, "nothing left in flight");
 }
 
+const within = (p, ms, what) => Promise.race([
+  p.then(() => "resolved", () => "rejected"),
+  new Promise((r) => setTimeout(() => r(`HUNG (${what})`), ms)),
+]);
+
+group("held neighbours are not refetched through a bridge");
+{
+  // Default knee is ~575 KB, so without the fix this bridges straight across.
+  const h = harness();
+  h.s.seed(R([4096, 8192]));
+  await h.s.request(R([0, 4096], [8192, 12288]), { priority: "immediate" });
+  const overlaps = h.calls.filter(([lo, hi]) => lo < 8192 && hi > 4096);
+  ok(overlaps.length === 0, `no transfer covers the seeded bytes (saw ${JSON.stringify(h.calls)})`);
+}
+{
+  const h = harness({ manual: true });
+  h.s.request(R([4096, 8192]), { priority: "immediate" });
+  h.s.request(R([0, 4096], [8192, 12288]), { priority: "immediate" });
+  const overlaps = h.calls.slice(1).filter(([lo, hi]) => lo < 8192 && hi > 4096);
+  ok(overlaps.length === 0, "in-flight bytes are not put on the wire a second time");
+  h.settleAll(); await tick();
+}
+
+group("fetchRange may throw or return a plain value without wedging anything");
+{
+  let first = true;
+  const s = createScheduler({
+    concurrency: 1, now: () => 0,
+    fetchRange: () => { if (first) { first = false; throw new Error("sync boom"); } return "bytes"; },
+  });
+  const a = await within(s.request(R([0, 4096]), { priority: "immediate" }), 200, "throw");
+  ok(a === "rejected", `a synchronous throw rejects the caller (got ${a})`);
+  ok(s.stats().active === 0, "and releases its concurrency slot");
+  const b = await within(s.request(R([8192, 12288]), { priority: "immediate" }), 200, "after throw");
+  ok(b === "resolved", `the next request still completes (got ${b})`);
+  ok(s.stats().inFlightBytes === 0, "and nothing is stranded in flight");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

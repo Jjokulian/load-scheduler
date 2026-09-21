@@ -76,5 +76,30 @@ group("worthSending follows the measured knee");
   ok(worthSending(e.knee() * 2, e), "and anything above it");
 }
 
+group("a bridge never spans held or in-flight bytes, whatever the gap");
+{
+  // THE REGRESSION. The ordering test above uses gap 0, so it could not see
+  // this: the hole left by subtracting held bytes IS the held bytes, and a
+  // bridge sized to the knee filled it -- fetching them a second time.
+  const p = planRuns(R([0, 4096], [8192, 12288]), { held: R([4096, 8192]), gap: 4096 });
+  eq(p.runs, R([0, 4096], [8192, 12288]), "held hole is not bridged even though it fits the gap");
+  eq(p.waste, 0, "and nothing is paid for twice");
+}
+{
+  const p = planRuns(R([0, 4096], [8192, 12288]), { inFlight: R([4096, 8192]), gap: 1 << 20 });
+  eq(p.runs.length, 2, "an in-flight hole is not bridged at a huge gap either");
+}
+{
+  // A hole that is only PARTLY held must not be bridged: any overlap is a refetch.
+  const p = planRuns(R([0, 4096], [12288, 16384]), { held: R([6000, 7000]), gap: 1 << 20 });
+  eq(p.runs.length, 2, "partly held hole is not bridged");
+}
+{
+  // An ordinary hole nobody has is still bridged -- the fix must not kill the trade.
+  const p = planRuns(R([0, 4096], [8192, 12288]), { held: R([100000, 104096]), gap: 4096 });
+  eq(p.runs, R([0, 12288]), "an unheld hole is still bridged");
+  eq(p.waste, 4096, "and its cost reported");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

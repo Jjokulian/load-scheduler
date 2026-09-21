@@ -36,9 +36,13 @@ const s = createScheduler({ fetchRange, concurrency: 4, maxWait: 40 });
 await s.request([{ lo: 0, hi: 4096 }], { priority: "immediate" });
 ```
 
-* `fetchRange(lo, hi)` — the only thing it needs from the outside. Returns the
-  bytes. How they are fetched is not its business.
-* `request(ranges, opts)` — resolves once every byte asked for has arrived.
+* `fetchRange(lo, hi)` — the only thing it needs from the outside. May return
+  the bytes or a promise of them, and may throw; all three are handled. How
+  they are fetched is not its business.
+* `request(ranges, opts)` — resolves once every byte asked for has arrived,
+  and **rejects** if a transfer fails. A failure rejects every outstanding
+  request, since at this level a failed run cannot be told apart from an
+  unrelated one.
 
 ### Two priorities, because bulking must not delay a new view
 
@@ -51,10 +55,14 @@ await s.request([{ lo: 0, hi: 4096 }], { priority: "immediate" });
 ### It never fetches the same bytes twice
 
 Requested ranges are subtracted against what has **arrived** and what is
-**in flight** before anything is planned. The HTTP pipe is the bottleneck, so
-re-reading bytes already held is the most expensive possible mistake. This is
-the part that matters more than parallelism: bridging gaps to save round trips
-will happily re-read neighbours already cached unless it is subtracted first.
+**in flight** before anything is planned, and a bridge is **never allowed to
+cross** either. The HTTP pipe is the bottleneck, so re-reading bytes already
+held is the most expensive possible mistake.
+
+Subtracting first is not enough on its own, and an earlier version relied on
+it: after subtraction, the holes between the remaining runs are frequently the
+held bytes themselves, and a bridge sized to the knee (~560 KiB) spans them —
+fetching them again. Only refusing the bridge prevents that.
 
 ## Layout
 
