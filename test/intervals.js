@@ -51,6 +51,39 @@ eq(split(R([0, 10], [50, 60]), 4),
    R([0, 4], [4, 8], [8, 10], [50, 54], [54, 58], [58, 60]), "splits each run");
 eq(total(split(R([0, 100]), 7)), 100, "splitting preserves total");
 
+group("bridge with avoid: linear form equals the per-hole form");
+{
+  // The reference: test each hole against everything blocked, as the first
+  // version did. Correct, and quadratic.
+  const reference = (list, gap, avoid) => {
+    const xs = normalise(list), blocked = normalise(avoid);
+    if (xs.length < 2 || !(gap > 0)) return xs;
+    const out = [xs[0]];
+    for (let i = 1; i < xs.length; i++) {
+      const last = out[out.length - 1], hole = { lo: last.hi, hi: xs[i].lo };
+      const clear = total(subtract([hole], blocked)) === hole.hi - hole.lo;
+      if (hole.hi - hole.lo <= gap && clear) last.hi = Math.max(last.hi, xs[i].hi);
+      else out.push({ ...xs[i] });
+    }
+    return out;
+  };
+  let seed = 12345;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const rand = (k, span) => Array.from({ length: k }, () => {
+    const lo = rnd(span); return { lo, hi: lo + 1 + rnd(40) };
+  });
+  let mismatches = 0;
+  for (let t = 0; t < 3000; t++) {
+    const list = rand(1 + rnd(12), 600), avoid = rand(rnd(10), 600), gap = rnd(80);
+    if (JSON.stringify(bridge(list, gap, avoid)) !== JSON.stringify(reference(list, gap, avoid))) mismatches++;
+  }
+  eq(mismatches, 0, "3,000 random cases agree with the per-hole reference");
+  eq(bridge(R([0, 10], [20, 30]), 10, R([12, 13])), R([0, 10], [20, 30]), "a blocked byte inside the hole stops the bridge");
+  eq(bridge(R([0, 10], [20, 30]), 10, R([10, 12])), R([0, 10], [20, 30]), "blocked at the hole's start");
+  eq(bridge(R([0, 10], [20, 30]), 10, R([18, 20])), R([0, 10], [20, 30]), "blocked at the hole's end");
+  eq(bridge(R([0, 10], [20, 30]), 10, R([5, 10], [30, 35])), R([0, 30]), "blocked only outside the hole does not");
+}
+
 group("total");
 eq(total([]), 0, "empty is zero");
 eq(total(R([0, 10], [20, 25])), 15, "sums lengths");
