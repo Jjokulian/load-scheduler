@@ -1,0 +1,9 @@
+{
+  "name": "load-scheduler",
+  "private": true,
+  "type": "module",
+  "description": "Measures a link's overhead and throughput, then sizes transfers to it. Knows byte ranges, nothing else.",
+  "scripts": {
+    "test": "node test/intervals.js && node test/estimate.js && node test/plan.js && node test/schedule.js"
+  }
+}
