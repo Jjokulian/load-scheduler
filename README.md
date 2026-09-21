@@ -59,6 +59,9 @@ flight on the same pipe, wall time counts their bytes too. Once there is a
 fit, a sample past 4x its prediction + 20 ms is a stall and is set aside;
 four in a row means the link really changed, and they replace the window.
 `stats()` reports `samplesFitted`, `samplesShared` and `samplesStalled`.
+Under constant saturation there may be no lone transfer at all, and the
+defaults stand; `sampleShared: true` fits shared transfers too (stalls are
+still set aside).
 
 ### `ordered` (prototype, off by default)
 

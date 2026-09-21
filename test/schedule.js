@@ -237,6 +237,19 @@ group("only a transfer that had the link to itself is a sample");
   ok(s.estimator.measured && Math.abs(s.estimator.overheadMs - 25) < 0.5, `and they fit the link (${s.estimator.overheadMs.toFixed(2)} ms)`);
 }
 
+{
+  // sampleShared: the same four shared transfers ARE samples when asked for.
+  let t = 0;
+  const pend = [];
+  const s = createScheduler({ concurrency: 4, now: () => t, sampleShared: true,
+    fetchRange: (lo, hi) => new Promise((res) => pend.push({ res })) });
+  const four = s.request(R([0, 1000], [1e7, 1e7 + 8000], [2e7, 2e7 + 16000], [3e7, 3e7 + 64000]), { priority: "immediate" });
+  for (const b of [1000, 8000, 16000, 64000]) { t += 25 + b / 1000; pend.shift().res(); await tick(); }
+  await four;
+  ok(s.estimator.samples() === 4 && s.stats().samplesShared === 4 && s.stats().samplesFitted === 4,
+     "sampleShared: shared transfers are counted as shared AND fitted");
+}
+
 group("a stall held on the link does not poison the scheduler's fit");
 {
   let t = 0;
