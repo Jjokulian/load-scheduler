@@ -52,6 +52,20 @@ await s.request([{ lo: 0, hi: 4096 }], { priority: "immediate" });
   accumulated to reach the knee. One block at the edge of an existing view can
   afford this; it is what makes the transfers efficient.
 
+### What it measures
+
+Only a transfer that had the link to itself is a sample: with others in
+flight on the same pipe, wall time counts their bytes too. Once there is a
+fit, a sample past 4x its prediction + 20 ms is a stall and is set aside;
+four in a row means the link really changed, and they replace the window.
+`stats()` reports `samplesFitted`, `samplesShared` and `samplesStalled`.
+
+### `ordered` (prototype, off by default)
+
+`createScheduler({ ordered: true })` and `request(ranges, { rank })` send runs
+lowest rank first instead of in address order, and settle waiters lowest rank
+first. For callers that need arrivals in their own order. Not settled.
+
 ### It never fetches the same bytes twice
 
 Requested ranges are subtracted against what has **arrived** and what is

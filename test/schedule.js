@@ -258,5 +258,31 @@ group("a stall held on the link does not poison the scheduler's fit");
   ok(s.stats().samplesStalled === 1, "and the stalled sample is counted, not hidden");
 }
 
+group("ordered (prototype, off by default): runs go out in the caller's rank order");
+{
+  // Four runs a megabyte apart, ranked opposite to their addresses.
+  const want = R([0, 4096], [1e6, 1e6 + 4096], [2e6, 2e6 + 4096], [3e6, 3e6 + 4096]);
+  const plain = harness({ manual: true, concurrency: 1 });
+  plain.s.request(want, { priority: "immediate", rank: [3, 2, 1, 0] });
+  for (let i = 0; i < 4; i++) { plain.settleAll(); await tick(); }
+  eq(plain.calls.map(([lo]) => lo), [0, 1e6, 2e6, 3e6], "off by default: address order, rank ignored");
+
+  const h = harness({ manual: true, concurrency: 1, ordered: true });
+  h.s.request(want, { priority: "immediate", rank: [3, 2, 1, 0] });
+  for (let i = 0; i < 4; i++) { h.settleAll(); await tick(); }
+  eq(h.calls.map(([lo]) => lo), [3e6, 2e6, 1e6, 0], "ordered: lowest rank first");
+}
+{
+  // Waiters covered by one transfer settle lowest rank first.
+  const h = harness({ manual: true, concurrency: 1, ordered: true });
+  const order = [];
+  const ps = [2, 0, 1].map((k) => h.s.request(R([k * 4096, k * 4096 + 4096]), { priority: "fill", rank: 10 - k })
+    .then(() => order.push(10 - k)));
+  h.fireTimers(); h.settleAll();
+  await Promise.all(ps);
+  ok(h.calls.length === 1, "three adjacent requests go as one transfer");
+  eq(order, [8, 9, 10], "and their waiters settle lowest rank first");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
