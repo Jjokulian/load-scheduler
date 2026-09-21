@@ -250,6 +250,28 @@ group("only a transfer that had the link to itself is a sample");
      "sampleShared: shared transfers are counted as shared AND fitted");
 }
 
+{
+  // sampleShared at concurrency 4: a stall releases four slow samples at once,
+  // which must not read as a link that changed.
+  let t = 0;
+  const pend = [];
+  const s = createScheduler({ concurrency: 4, now: () => t, sampleShared: true,
+    fetchRange: (lo, hi) => new Promise((res) => pend.push({ res })) });
+  const sizes = [1000, 4000, 16000, 64000, 2000, 32000, 8000, 128000];
+  for (const [i, b] of sizes.entries()) {
+    const p = s.request(R([i * 1e7, i * 1e7 + b]), { priority: "immediate" });
+    t += 25 + b / 1000; pend.shift().res(); await tick(); await p;
+  }
+  ok(s.estimator.measured, "fitted before the stall");
+  const held = s.request(R([100e7, 100e7 + 4096], [101e7, 101e7 + 4096], [102e7, 102e7 + 4096], [103e7, 103e7 + 4096]), { priority: "immediate" });
+  t += 2000;                                     // all four held 2 s
+  while (pend.length) { pend.shift().res(); await tick(); }
+  await held;
+  ok(s.stats().samplesStalled === 4, `the four stalled samples are set aside (${s.stats().samplesStalled})`);
+  ok(s.estimator.measured && Math.abs(s.estimator.overheadMs - 25) < 0.5,
+     `and the fit is not replaced by the stall (${s.estimator.overheadMs.toFixed(1)} ms)`);
+}
+
 group("a stall held on the link does not poison the scheduler's fit");
 {
   let t = 0;
